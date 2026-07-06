@@ -1246,6 +1246,7 @@ final class GestureEngine {
     private var isCapturingCommandThreeFingerGesture = false
     private var isCapturingBareThreeFingerGesture = false
     private var isPassingBareThreeFingerGesture = false
+    private var hasHandledBareThreeFingerContact = false
     private var passNextDownSwipeUntil: CFTimeInterval = 0
     private var isCommandPressed = CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand)
     private var suppressUntil: CFTimeInterval = 0
@@ -1312,6 +1313,10 @@ final class GestureEngine {
         defer { lock.unlock() }
 
         if startCentroid == nil {
+            if currentMode == .bareVertical && hasHandledBareThreeFingerContact {
+                return false
+            }
+
             startCentroid = centroid
             captureMode = currentMode
             isCapturingCommandThreeFingerGesture = currentMode == .commandHorizontal
@@ -1429,6 +1434,7 @@ final class GestureEngine {
             captureMode = nil
 
             onSwipeDown?()
+            hasHandledBareThreeFingerContact = true
             return false
         }
 
@@ -1450,6 +1456,7 @@ final class GestureEngine {
         isCapturingCommandThreeFingerGesture = false
         isCapturingBareThreeFingerGesture = false
         isPassingBareThreeFingerGesture = false
+        hasHandledBareThreeFingerContact = false
         if CACurrentMediaTime() >= passNextDownSwipeUntil {
             passNextDownSwipeUntil = 0
         }
