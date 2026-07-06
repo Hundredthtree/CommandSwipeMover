@@ -1246,7 +1246,7 @@ final class GestureEngine {
     private var isCapturingCommandThreeFingerGesture = false
     private var isCapturingBareThreeFingerGesture = false
     private var isPassingBareThreeFingerGesture = false
-    private var missionControlLikelyOpen = false
+    private var passNextDownSwipeUntil: CFTimeInterval = 0
     private var isCommandPressed = CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand)
     private var suppressUntil: CFTimeInterval = 0
     private var lastFireTime: CFTimeInterval = 0
@@ -1257,6 +1257,7 @@ final class GestureEngine {
     private let horizontalTolerance: CGFloat = 0.11
     private let cooldown: CFTimeInterval = 0.18
     private let suppressionTail: CFTimeInterval = 0.7
+    private let missionControlPassThroughWindow: CFTimeInterval = 1.4
 
     func shouldSuppressSystemGesture(type: CGEventType, commandDown: Bool) -> Bool {
         let now = CACurrentMediaTime()
@@ -1386,6 +1387,7 @@ final class GestureEngine {
             if horizontalIntent {
                 isPassingBareThreeFingerGesture = true
                 isCapturingBareThreeFingerGesture = false
+                passNextDownSwipeUntil = 0
                 suppressUntil = 0
                 return false
             }
@@ -1393,7 +1395,7 @@ final class GestureEngine {
             let upwardIntent = deltaY >= verticalThreshold
                 && abs(deltaY) > abs(deltaX) * 1.25
             if upwardIntent {
-                missionControlLikelyOpen = true
+                passNextDownSwipeUntil = now + missionControlPassThroughWindow
                 isPassingBareThreeFingerGesture = true
                 isCapturingBareThreeFingerGesture = false
                 suppressUntil = 0
@@ -1410,14 +1412,15 @@ final class GestureEngine {
                 return false
             }
 
-            if missionControlLikelyOpen {
-                missionControlLikelyOpen = false
+            if now < passNextDownSwipeUntil {
+                passNextDownSwipeUntil = 0
                 isPassingBareThreeFingerGesture = true
                 isCapturingBareThreeFingerGesture = false
                 suppressUntil = 0
                 return false
             }
 
+            passNextDownSwipeUntil = 0
             isCapturingBareThreeFingerGesture = false
             lastFireTime = now
             suppressUntil = 0
@@ -1446,6 +1449,9 @@ final class GestureEngine {
         isCapturingCommandThreeFingerGesture = false
         isCapturingBareThreeFingerGesture = false
         isPassingBareThreeFingerGesture = false
+        if CACurrentMediaTime() >= passNextDownSwipeUntil {
+            passNextDownSwipeUntil = 0
+        }
         startCentroid = nil
         captureMode = nil
         lock.unlock()
