@@ -1422,6 +1422,7 @@ final class GestureEngine {
 
             passNextDownSwipeUntil = 0
             isCapturingBareThreeFingerGesture = false
+            isPassingBareThreeFingerGesture = true
             lastFireTime = now
             suppressUntil = 0
             self.startCentroid = nil
