@@ -747,7 +747,7 @@ final class WhatsAppOverlayController {
             let windowOnTargetDisplay = windowIsOnDisplay(window, display: targetDisplay)
             let windowOnCurrentSpace = windowIsVisibleInCurrentSpace(window, runningApp: runningApp)
 
-            if isOverlayVisible && windowOnTargetDisplay && windowOnCurrentSpace {
+            if windowOnTargetDisplay && windowOnCurrentSpace {
                 hide(window: window, runningApp: runningApp, completion: completion)
                 return
             }
@@ -816,11 +816,6 @@ final class WhatsAppOverlayController {
 
             guard let ownerPID = windowInfoIntValue(info[kCGWindowOwnerPID as String]),
                   ownerPID == Int(runningApp.processIdentifier) else {
-                return false
-            }
-
-            guard let layer = windowInfoIntValue(info[kCGWindowLayer as String]),
-                  layer == 0 else {
                 return false
             }
 
