@@ -810,7 +810,7 @@ final class WhatsAppOverlayController {
                 window: window,
                 runningApp: runningApp,
                 finalFrame: finalFrame,
-                delayBeforeLayout: fullScreenSpace ? 0.28 : 0,
+                retryActivation: fullScreenSpace,
                 completion: completion
             )
         }
@@ -820,32 +820,34 @@ final class WhatsAppOverlayController {
         window: AXUIElement,
         runningApp: NSRunningApplication,
         finalFrame: CGRect,
-        delayBeforeLayout: TimeInterval,
+        retryActivation: Bool,
         completion: @escaping (MoveResult) -> Void
     ) {
-        let finish = {
+        let applyLayoutAndRaise = {
             _ = self.setAXValue(window, attribute: kAXSizeAttribute, size: finalFrame.size)
             _ = self.setAXValue(window, attribute: kAXPositionAttribute, point: finalFrame.origin)
             _ = self.setWindowLevel(window, key: .floatingWindow)
             self.setApplicationHidden(false, runningApp: runningApp)
             self.raiseAndFocus(window, runningApp: runningApp)
+        }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                let visible = !self.appIsHidden(runningApp) && self.bestWindow(for: runningApp) != nil
-                self.isOverlayVisible = visible
-                self.isAnimating = false
-                completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
+        setApplicationHidden(false, runningApp: runningApp)
+        raiseAndFocus(window, runningApp: runningApp)
+        applyLayoutAndRaise()
+
+        if retryActivation {
+            for delay in [0.18, 0.42] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    applyLayoutAndRaise()
+                }
             }
         }
 
-        if delayBeforeLayout > 0 {
-            setApplicationHidden(false, runningApp: runningApp)
-            raiseAndFocus(window, runningApp: runningApp)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delayBeforeLayout) {
-                finish()
-            }
-        } else {
-            finish()
+        DispatchQueue.main.asyncAfter(deadline: .now() + (retryActivation ? 0.58 : 0.12)) {
+            let visible = !self.appIsHidden(runningApp) && self.bestWindow(for: runningApp) != nil
+            self.isOverlayVisible = visible
+            self.isAnimating = false
+            completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
         }
     }
 
