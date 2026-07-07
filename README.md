@@ -7,6 +7,8 @@ Gesture:
 - Hold Command.
 - Swipe left or right with three fingers on the trackpad.
 - The focused window from the current app moves to the next display in that direction and fills that display.
+- Hold Command and swipe down with three fingers.
+- Brave Browser opens or comes to the front.
 - Swipe down with three fingers without holding Command.
 - WhatsApp opens immediately in the center of the monitor under the pointer. Swipe down again to hide it.
 - If Mission Control was opened with a three-finger swipe up, the next three-finger swipe down is passed through to macOS so Mission Control can close instead of opening WhatsApp.

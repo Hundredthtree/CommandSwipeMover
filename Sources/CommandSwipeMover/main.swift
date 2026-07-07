@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusController = StatusController()
     private let windowMover = WindowMover()
     private let whatsAppOverlayController = WhatsAppOverlayController()
+    private let braveController = BraveController()
     private let gestureController = GestureController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.toggleWhatsAppOverlay()
         }
 
+        let openBrave = {
+            self.openBraveBrowser()
+        }
+
         let quit = {
             NSApp.terminate(nil)
         }
@@ -45,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusController.onMoveLeft = moveLeft
         statusController.onMoveRight = moveRight
         statusController.onToggleWhatsApp = toggleWhatsApp
+        statusController.onOpenBrave = openBrave
         statusController.onQuit = quit
 
         gestureController.onSwipe = { direction in
@@ -52,6 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         gestureController.onThreeFingerSwipeDown = {
             self.toggleWhatsAppOverlay()
+        }
+        gestureController.onCommandThreeFingerSwipeDown = {
+            self.openBraveBrowser()
         }
 
         statusController.install()
@@ -73,6 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggleWhatsAppOverlay() {
         whatsAppOverlayController.toggle { [weak self] result in
+            self?.statusController.show(result.message)
+        }
+    }
+
+    private func openBraveBrowser() {
+        braveController.open { [weak self] result in
             self?.statusController.show(result.message)
         }
     }
@@ -101,6 +116,7 @@ final class StatusController {
     var onMoveLeft: (() -> Void)?
     var onMoveRight: (() -> Void)?
     var onToggleWhatsApp: (() -> Void)?
+    var onOpenBrave: (() -> Void)?
     var onQuit: (() -> Void)?
 
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -152,6 +168,10 @@ final class StatusController {
         whatsApp.target = self
         menu.addItem(whatsApp)
 
+        let brave = NSMenuItem(title: "Open Brave Browser", action: #selector(openBrave), keyEquivalent: "")
+        brave.target = self
+        menu.addItem(brave)
+
         menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -164,7 +184,7 @@ final class StatusController {
     func refresh(accessibilityTrusted: Bool, inputMonitoringTrusted: Bool) {
         accessibilityItem.title = accessibilityTrusted ? "Accessibility: Enabled" : "Accessibility: Required"
         inputMonitoringItem.title = inputMonitoringTrusted ? "Input Monitoring: Enabled" : "Input Monitoring: Required"
-        show("Command + three-finger left/right moves windows. Three-finger down toggles WhatsApp.")
+        show("Command + three-finger left/right moves windows. Command + down opens Brave. Three-finger down toggles WhatsApp.")
     }
 
     func show(_ message: String) {
@@ -185,6 +205,10 @@ final class StatusController {
 
     @objc private func toggleWhatsApp() {
         onToggleWhatsApp?()
+    }
+
+    @objc private func openBrave() {
+        onOpenBrave?()
     }
 
     @objc private func quit() {
@@ -975,6 +999,37 @@ final class WhatsAppOverlayController {
     }
 }
 
+final class BraveController {
+    private let bundleIdentifier = "com.brave.Browser"
+    private let applicationURL = URL(fileURLWithPath: "/Applications/Brave Browser.app")
+
+    func open(completion: @escaping (MoveResult) -> Void) {
+        if let runningApp = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first {
+            runningApp.unhide()
+            runningApp.activate(options: [.activateIgnoringOtherApps])
+            completion(MoveResult(message: "Brave opened."))
+            return
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { app, error in
+            DispatchQueue.main.async {
+                if let app {
+                    app.unhide()
+                    app.activate(options: [.activateIgnoringOtherApps])
+                    completion(MoveResult(message: "Brave opened."))
+                    return
+                }
+
+                completion(MoveResult(message: error?.localizedDescription ?? "Could not open Brave."))
+            }
+        }
+    }
+}
+
 final class WindowLevelSetter {
     static let shared = WindowLevelSetter()
 
@@ -1084,6 +1139,7 @@ private enum AccessibilityValue {
 final class GestureController {
     var onSwipe: ((SwipeDirection) -> Void)?
     var onThreeFingerSwipeDown: (() -> Void)?
+    var onCommandThreeFingerSwipeDown: (() -> Void)?
 
     private var framework: MultitouchFramework?
     private let systemGestureSuppressor = SystemGestureSuppressor()
@@ -1097,6 +1153,11 @@ final class GestureController {
         GestureEngine.shared.onSwipeDown = { [weak self] in
             DispatchQueue.main.async {
                 self?.onThreeFingerSwipeDown?()
+            }
+        }
+        GestureEngine.shared.onCommandSwipeDown = { [weak self] in
+            DispatchQueue.main.async {
+                self?.onCommandThreeFingerSwipeDown?()
             }
         }
 
@@ -1234,6 +1295,7 @@ final class GestureEngine {
 
     var onSwipe: ((SwipeDirection) -> Void)?
     var onSwipeDown: (() -> Void)?
+    var onCommandSwipeDown: (() -> Void)?
 
     private enum CaptureMode {
         case commandHorizontal
@@ -1247,6 +1309,7 @@ final class GestureEngine {
     private var isCapturingBareThreeFingerGesture = false
     private var isPassingBareThreeFingerGesture = false
     private var hasHandledBareThreeFingerContact = false
+    private var hasHandledCommandThreeFingerContact = false
     private var passNextDownSwipeUntil: CFTimeInterval = 0
     private var isCommandPressed = CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand)
     private var suppressUntil: CFTimeInterval = 0
@@ -1290,6 +1353,7 @@ final class GestureEngine {
                 captureMode = nil
                 suppressUntil = 0
             }
+            hasHandledCommandThreeFingerContact = false
         }
         lock.unlock()
     }
@@ -1315,6 +1379,10 @@ final class GestureEngine {
         if startCentroid == nil {
             if currentMode == .bareVertical && hasHandledBareThreeFingerContact {
                 return false
+            }
+            if currentMode == .commandHorizontal && hasHandledCommandThreeFingerContact {
+                suppressUntil = CACurrentMediaTime() + suppressionTail
+                return true
             }
 
             startCentroid = centroid
@@ -1362,7 +1430,23 @@ final class GestureEngine {
             isCapturingBareThreeFingerGesture = false
             suppressUntil = now + suppressionTail
 
+            if hasHandledCommandThreeFingerContact {
+                return true
+            }
+
             guard now - lastFireTime > cooldown else {
+                return true
+            }
+
+            if deltaY <= -verticalThreshold,
+               abs(deltaX) <= horizontalTolerance,
+               abs(deltaY) > abs(deltaX) * 1.45 {
+                hasHandledCommandThreeFingerContact = true
+                lastFireTime = now
+                suppressUntil = now + suppressionTail
+                self.startCentroid = nil
+                captureMode = nil
+                onCommandSwipeDown?()
                 return true
             }
 
@@ -1457,6 +1541,7 @@ final class GestureEngine {
         isCapturingBareThreeFingerGesture = false
         isPassingBareThreeFingerGesture = false
         hasHandledBareThreeFingerContact = false
+        hasHandledCommandThreeFingerContact = false
         if CACurrentMediaTime() >= passNextDownSwipeUntil {
             passNextDownSwipeUntil = 0
         }
