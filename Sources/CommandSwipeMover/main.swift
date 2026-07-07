@@ -741,19 +741,25 @@ final class WhatsAppOverlayController {
             return
         }
 
-        if !appIsHidden(runningApp),
-           let window = bestWindow(for: runningApp) {
-            let targetDisplay = displayContainingPointer()
-            let windowOnTargetDisplay = windowIsOnDisplay(window, display: targetDisplay)
-            let windowOnCurrentSpace = windowIsVisibleInCurrentSpace(window, runningApp: runningApp)
+        let targetDisplay = displayContainingPointer()
+        let appVisibleOnTargetDisplay = !appIsHidden(runningApp)
+            && appHasVisibleWindow(runningApp, on: targetDisplay)
 
-            if windowOnTargetDisplay && windowOnCurrentSpace {
+        if appVisibleOnTargetDisplay {
+            if let window = bestWindow(for: runningApp) {
                 hide(window: window, runningApp: runningApp, completion: completion)
-                return
+            } else {
+                hide(runningApp: runningApp, completion: completion)
             }
+            return
+        }
 
-            if !windowOnCurrentSpace {
-                show(runningApp: runningApp, completion: completion)
+        if let window = bestWindow(for: runningApp) {
+            let windowOnTargetDisplay = windowIsOnDisplay(window, display: targetDisplay)
+            let appIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
+
+            if !appIsHidden(runningApp) && windowOnTargetDisplay && appIsFrontmost {
+                hide(window: window, runningApp: runningApp, completion: completion)
                 return
             }
 
@@ -781,7 +787,7 @@ final class WhatsAppOverlayController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             let visible = !self.appIsHidden(runningApp)
                 && self.bestWindow(for: runningApp) != nil
-                && self.windowIsVisibleInCurrentSpace(window, runningApp: runningApp)
+                && self.appHasVisibleWindow(runningApp, on: display)
                 && self.windowIsOnDisplay(window, display: display)
             self.isOverlayVisible = visible
             self.isAnimating = false
@@ -798,22 +804,13 @@ final class WhatsAppOverlayController {
         return display.contains(center)
     }
 
-    private func windowIsVisibleInCurrentSpace(_ window: AXUIElement, runningApp: NSRunningApplication) -> Bool {
-        guard let targetWindowNumber = AccessibilityValue.windowNumberAttribute(window) else {
-            return false
-        }
-
+    private func appHasVisibleWindow(_ runningApp: NSRunningApplication, on display: CGRect) -> Bool {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return false
         }
 
         return rawWindows.contains { info in
-            guard let windowNumber = windowInfoIntValue(info[kCGWindowNumber as String]),
-                  windowNumber == targetWindowNumber else {
-                return false
-            }
-
             guard let ownerPID = windowInfoIntValue(info[kCGWindowOwnerPID as String]),
                   ownerPID == Int(runningApp.processIdentifier) else {
                 return false
@@ -834,7 +831,9 @@ final class WhatsAppOverlayController {
                 return false
             }
 
-            return bounds.width > 40 && bounds.height > 40
+            return bounds.width > 40
+                && bounds.height > 40
+                && bounds.intersection(display).area > 1
         }
     }
 
@@ -964,11 +963,25 @@ final class WhatsAppOverlayController {
             let visibleWindow = self.bestWindow(for: runningApp)
             let visible = !self.appIsHidden(runningApp)
                 && visibleWindow != nil
-                && visibleWindow.map { self.windowIsVisibleInCurrentSpace($0, runningApp: runningApp) } == true
+                && self.appHasVisibleWindow(runningApp, on: self.displayContaining(center: CGPoint(x: finalFrame.midX, y: finalFrame.midY)))
             self.isOverlayVisible = visible
             self.isAnimating = false
             completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
         }
+    }
+
+    private func hide(runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
+        isAnimating = true
+
+        if let window = bestWindow(for: runningApp) {
+            clearMinimizedState(window)
+            _ = setWindowLevel(window, key: .normalWindow)
+        }
+
+        setApplicationHidden(true, runningApp: runningApp)
+        isOverlayVisible = false
+        isAnimating = false
+        completion(MoveResult(message: "WhatsApp hidden."))
     }
 
     private func applyOverlayLayoutAndRaise(
