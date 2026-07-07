@@ -741,14 +741,53 @@ final class WhatsAppOverlayController {
             return
         }
 
-        if isOverlayVisible,
-           !appIsHidden(runningApp),
+        if !appIsHidden(runningApp),
            let window = bestWindow(for: runningApp) {
-            hide(window: window, runningApp: runningApp, completion: completion)
-            return
+            let targetDisplay = displayContainingPointer()
+
+            if isOverlayVisible && windowIsOnDisplay(window, display: targetDisplay) {
+                hide(window: window, runningApp: runningApp, completion: completion)
+                return
+            }
+
+            if !windowIsOnDisplay(window, display: targetDisplay) {
+                moveVisibleWindow(window, runningApp: runningApp, to: targetDisplay, completion: completion)
+                return
+            }
         }
 
         show(runningApp: runningApp, completion: completion)
+    }
+
+    private func moveVisibleWindow(
+        _ window: AXUIElement,
+        runningApp: NSRunningApplication,
+        to display: CGRect,
+        completion: @escaping (MoveResult) -> Void
+    ) {
+        isAnimating = true
+        clearMinimizedState(window)
+
+        let finalFrame = overlayFrame(in: display)
+        applyOverlayLayoutAndRaise(window, runningApp: runningApp, finalFrame: finalFrame)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            let visible = !self.appIsHidden(runningApp)
+                && self.bestWindow(for: runningApp) != nil
+                && self.windowIsOnDisplay(window, display: display)
+            self.isOverlayVisible = visible
+            self.isAnimating = false
+            completion(MoveResult(message: visible ? "WhatsApp moved." : "WhatsApp could not move."))
+        }
+    }
+
+    private func windowIsOnDisplay(_ window: AXUIElement, display: CGRect) -> Bool {
+        guard let frame = windowFrame(window) else {
+            return false
+        }
+
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        return display.contains(center)
     }
 
     private func showAfterLaunch(completion: @escaping (MoveResult) -> Void) {
@@ -783,8 +822,10 @@ final class WhatsAppOverlayController {
         let hasExistingWindow = bestWindow(for: runningApp) != nil
         let fullScreenSpace = frontmostWindowIsFullScreen(excluding: runningApp)
 
-        if hasExistingWindow && !fullScreenSpace {
-            setApplicationHidden(true, runningApp: runningApp)
+        if hasExistingWindow {
+            if !fullScreenSpace {
+                setApplicationHidden(true, runningApp: runningApp)
+            }
         } else {
             setApplicationHidden(false, runningApp: runningApp)
             let configuration = NSWorkspace.OpenConfiguration()
@@ -824,15 +865,9 @@ final class WhatsAppOverlayController {
         completion: @escaping (MoveResult) -> Void
     ) {
         let applyLayoutAndRaise = {
-            _ = self.setAXValue(window, attribute: kAXSizeAttribute, size: finalFrame.size)
-            _ = self.setAXValue(window, attribute: kAXPositionAttribute, point: finalFrame.origin)
-            _ = self.setWindowLevel(window, key: .floatingWindow)
-            self.setApplicationHidden(false, runningApp: runningApp)
-            self.raiseAndFocus(window, runningApp: runningApp)
+            self.applyOverlayLayoutAndRaise(window, runningApp: runningApp, finalFrame: finalFrame)
         }
 
-        setApplicationHidden(false, runningApp: runningApp)
-        raiseAndFocus(window, runningApp: runningApp)
         applyLayoutAndRaise()
 
         if retryActivation {
@@ -849,6 +884,18 @@ final class WhatsAppOverlayController {
             self.isAnimating = false
             completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
         }
+    }
+
+    private func applyOverlayLayoutAndRaise(
+        _ window: AXUIElement,
+        runningApp: NSRunningApplication,
+        finalFrame: CGRect
+    ) {
+        _ = setAXValue(window, attribute: kAXSizeAttribute, size: finalFrame.size)
+        _ = setAXValue(window, attribute: kAXPositionAttribute, point: finalFrame.origin)
+        _ = setWindowLevel(window, key: .floatingWindow)
+        setApplicationHidden(false, runningApp: runningApp)
+        raiseAndFocus(window, runningApp: runningApp)
     }
 
     private func hide(window: AXUIElement, runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
