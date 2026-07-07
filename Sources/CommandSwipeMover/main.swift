@@ -741,7 +741,9 @@ final class WhatsAppOverlayController {
             return
         }
 
-        if isOverlayVisible, let window = bestWindow(for: runningApp) {
+        if isOverlayVisible,
+           !appIsHidden(runningApp),
+           let window = bestWindow(for: runningApp) {
             hide(window: window, runningApp: runningApp, completion: completion)
             return
         }
@@ -779,8 +781,9 @@ final class WhatsAppOverlayController {
         isAnimating = true
         let display = displayContainingPointer()
         let hasExistingWindow = bestWindow(for: runningApp) != nil
+        let fullScreenSpace = frontmostWindowIsFullScreen(excluding: runningApp)
 
-        if hasExistingWindow {
+        if hasExistingWindow && !fullScreenSpace {
             setApplicationHidden(true, runningApp: runningApp)
         } else {
             setApplicationHidden(false, runningApp: runningApp)
@@ -801,19 +804,48 @@ final class WhatsAppOverlayController {
             }
 
             self.clearMinimizedState(window)
-            self.setApplicationHidden(true, runningApp: runningApp)
 
             let finalFrame = self.overlayFrame(in: display)
+            self.show(
+                window: window,
+                runningApp: runningApp,
+                finalFrame: finalFrame,
+                delayBeforeLayout: fullScreenSpace ? 0.28 : 0,
+                completion: completion
+            )
+        }
+    }
 
+    private func show(
+        window: AXUIElement,
+        runningApp: NSRunningApplication,
+        finalFrame: CGRect,
+        delayBeforeLayout: TimeInterval,
+        completion: @escaping (MoveResult) -> Void
+    ) {
+        let finish = {
             _ = self.setAXValue(window, attribute: kAXSizeAttribute, size: finalFrame.size)
             _ = self.setAXValue(window, attribute: kAXPositionAttribute, point: finalFrame.origin)
             _ = self.setWindowLevel(window, key: .floatingWindow)
-
             self.setApplicationHidden(false, runningApp: runningApp)
             self.raiseAndFocus(window, runningApp: runningApp)
-            self.isOverlayVisible = true
-            self.isAnimating = false
-            completion(MoveResult(message: "WhatsApp shown."))
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                let visible = !self.appIsHidden(runningApp) && self.bestWindow(for: runningApp) != nil
+                self.isOverlayVisible = visible
+                self.isAnimating = false
+                completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
+            }
+        }
+
+        if delayBeforeLayout > 0 {
+            setApplicationHidden(false, runningApp: runningApp)
+            raiseAndFocus(window, runningApp: runningApp)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delayBeforeLayout) {
+                finish()
+            }
+        } else {
+            finish()
         }
     }
 
@@ -890,6 +922,24 @@ final class WhatsAppOverlayController {
         return windowsValue as? [AXUIElement]
     }
 
+    private func frontmostWindowIsFullScreen(excluding runningApp: NSRunningApplication) -> Bool {
+        guard let frontmost = NSWorkspace.shared.frontmostApplication,
+              frontmost.processIdentifier != NSRunningApplication.current.processIdentifier,
+              frontmost.processIdentifier != runningApp.processIdentifier else {
+            return false
+        }
+
+        let appElement = AXUIElementCreateApplication(frontmost.processIdentifier)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+              let focused,
+              CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            return false
+        }
+
+        return AccessibilityValue.boolAttribute("AXFullScreen", element: (focused as! AXUIElement)) == true
+    }
+
     private func clearMinimizedState(_ window: AXUIElement) {
         if AccessibilityValue.boolAttribute(kAXMinimizedAttribute, element: window) == true {
             AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
@@ -918,6 +968,11 @@ final class WhatsAppOverlayController {
             runningApp.unhide()
             runningApp.activate(options: [.activateIgnoringOtherApps])
         }
+    }
+
+    private func appIsHidden(_ runningApp: NSRunningApplication) -> Bool {
+        let appElement = AXUIElementCreateApplication(runningApp.processIdentifier)
+        return AccessibilityValue.boolAttribute("AXHidden", element: appElement) ?? runningApp.isHidden
     }
 
     private func windowFrame(_ window: AXUIElement) -> CGRect? {
