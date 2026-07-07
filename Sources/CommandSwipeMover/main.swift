@@ -744,13 +744,20 @@ final class WhatsAppOverlayController {
         if !appIsHidden(runningApp),
            let window = bestWindow(for: runningApp) {
             let targetDisplay = displayContainingPointer()
+            let windowOnTargetDisplay = windowIsOnDisplay(window, display: targetDisplay)
+            let windowOnCurrentSpace = windowIsVisibleInCurrentSpace(window, runningApp: runningApp)
 
-            if isOverlayVisible && windowIsOnDisplay(window, display: targetDisplay) {
+            if isOverlayVisible && windowOnTargetDisplay && windowOnCurrentSpace {
                 hide(window: window, runningApp: runningApp, completion: completion)
                 return
             }
 
-            if !windowIsOnDisplay(window, display: targetDisplay) {
+            if !windowOnCurrentSpace {
+                show(runningApp: runningApp, completion: completion)
+                return
+            }
+
+            if !windowOnTargetDisplay {
                 moveVisibleWindow(window, runningApp: runningApp, to: targetDisplay, completion: completion)
                 return
             }
@@ -774,6 +781,7 @@ final class WhatsAppOverlayController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             let visible = !self.appIsHidden(runningApp)
                 && self.bestWindow(for: runningApp) != nil
+                && self.windowIsVisibleInCurrentSpace(window, runningApp: runningApp)
                 && self.windowIsOnDisplay(window, display: display)
             self.isOverlayVisible = visible
             self.isAnimating = false
@@ -788,6 +796,85 @@ final class WhatsAppOverlayController {
 
         let center = CGPoint(x: frame.midX, y: frame.midY)
         return display.contains(center)
+    }
+
+    private func windowIsVisibleInCurrentSpace(_ window: AXUIElement, runningApp: NSRunningApplication) -> Bool {
+        guard let targetWindowNumber = AccessibilityValue.windowNumberAttribute(window) else {
+            return false
+        }
+
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+
+        return rawWindows.contains { info in
+            guard let windowNumber = windowInfoIntValue(info[kCGWindowNumber as String]),
+                  windowNumber == targetWindowNumber else {
+                return false
+            }
+
+            guard let ownerPID = windowInfoIntValue(info[kCGWindowOwnerPID as String]),
+                  ownerPID == Int(runningApp.processIdentifier) else {
+                return false
+            }
+
+            guard let layer = windowInfoIntValue(info[kCGWindowLayer as String]),
+                  layer == 0 else {
+                return false
+            }
+
+            guard let alpha = windowInfoDoubleValue(info[kCGWindowAlpha as String]),
+                  alpha > 0 else {
+                return false
+            }
+
+            guard let sharingState = windowInfoIntValue(info[kCGWindowSharingState as String]),
+                  sharingState != 0 else {
+                return false
+            }
+
+            guard let boundsDictionary = info[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary) else {
+                return false
+            }
+
+            return bounds.width > 40 && bounds.height > 40
+        }
+    }
+
+    private func windowInfoIntValue(_ value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+
+        guard let value,
+              CFGetTypeID(value as CFTypeRef) == CFNumberGetTypeID() else {
+            return nil
+        }
+
+        var intValue = 0
+        guard CFNumberGetValue((value as! CFNumber), .intType, &intValue) else {
+            return nil
+        }
+        return intValue
+    }
+
+    private func windowInfoDoubleValue(_ value: Any?) -> Double? {
+        if let value = value as? Double {
+            return value
+        }
+
+        guard let value,
+              CFGetTypeID(value as CFTypeRef) == CFNumberGetTypeID() else {
+            return nil
+        }
+
+        var doubleValue = 0.0
+        guard CFNumberGetValue((value as! CFNumber), .doubleType, &doubleValue) else {
+            return nil
+        }
+        return doubleValue
     }
 
     private func showAfterLaunch(completion: @escaping (MoveResult) -> Void) {
@@ -879,7 +966,10 @@ final class WhatsAppOverlayController {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + (retryActivation ? 0.58 : 0.12)) {
-            let visible = !self.appIsHidden(runningApp) && self.bestWindow(for: runningApp) != nil
+            let visibleWindow = self.bestWindow(for: runningApp)
+            let visible = !self.appIsHidden(runningApp)
+                && visibleWindow != nil
+                && visibleWindow.map { self.windowIsVisibleInCurrentSpace($0, runningApp: runningApp) } == true
             self.isOverlayVisible = visible
             self.isAnimating = false
             completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
