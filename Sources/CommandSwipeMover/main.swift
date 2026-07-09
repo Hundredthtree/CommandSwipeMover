@@ -724,6 +724,8 @@ final class WhatsAppOverlayController {
     private let applicationURL = URL(fileURLWithPath: "/Applications/WhatsApp.app")
     private var isOverlayVisible = false
     private var isAnimating = false
+    private var suppressShowUntil: CFTimeInterval = 0
+    private let suppressShowAfterHideDuration: CFTimeInterval = 1.5
 
     func toggle(completion: @escaping (MoveResult) -> Void) {
         guard AccessibilityPermission.isTrusted else {
@@ -742,6 +744,21 @@ final class WhatsAppOverlayController {
         }
 
         let targetDisplay = displayContainingPointer()
+        let now = CACurrentMediaTime()
+
+        if now < suppressShowUntil {
+            completion(MoveResult(message: "WhatsApp hidden."))
+            return
+        }
+
+        if isOverlayVisible && !appIsHidden(runningApp) {
+            if let window = bestWindow(for: runningApp) {
+                hide(window: window, runningApp: runningApp, completion: completion)
+            } else {
+                hide(runningApp: runningApp, completion: completion)
+            }
+            return
+        }
 
         if !appIsHidden(runningApp),
            appHasVisibleWindow(runningApp, on: targetDisplay) {
@@ -795,11 +812,11 @@ final class WhatsAppOverlayController {
 
         let finalFrame = overlayFrame(in: display)
         applyOverlayLayoutAndRaise(window, runningApp: runningApp, finalFrame: finalFrame)
+        isOverlayVisible = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             let visible = !self.appIsHidden(runningApp)
                 && self.bestWindow(for: runningApp) != nil
-                && self.chatWindowIsVisible(window, runningApp: runningApp, on: display)
                 && self.windowIsOnDisplay(window, display: display)
             self.isOverlayVisible = visible
             self.isAnimating = false
@@ -1072,6 +1089,7 @@ final class WhatsAppOverlayController {
         }
 
         applyLayoutAndRaise()
+        isOverlayVisible = true
 
         if retryActivation {
             for delay in [0.18, 0.42] {
@@ -1083,15 +1101,7 @@ final class WhatsAppOverlayController {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + (retryActivation ? 0.58 : 0.12)) {
             let visibleWindow = self.bestWindow(for: runningApp)
-            let visible = !self.appIsHidden(runningApp)
-                && visibleWindow != nil
-                && visibleWindow.map {
-                    self.chatWindowIsVisible(
-                        $0,
-                        runningApp: runningApp,
-                        on: self.displayContaining(center: CGPoint(x: finalFrame.midX, y: finalFrame.midY))
-                    )
-                } == true
+            let visible = !self.appIsHidden(runningApp) && visibleWindow != nil
             self.isOverlayVisible = visible
             self.isAnimating = false
             completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
@@ -1100,6 +1110,7 @@ final class WhatsAppOverlayController {
 
     private func hide(runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
         isAnimating = true
+        suppressShowUntil = CACurrentMediaTime() + suppressShowAfterHideDuration
         setApplicationHidden(true, runningApp: runningApp)
         isOverlayVisible = false
         isAnimating = false
@@ -1108,6 +1119,7 @@ final class WhatsAppOverlayController {
 
     private func hideCall(window: AXUIElement, runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
         isAnimating = true
+        suppressShowUntil = CACurrentMediaTime() + suppressShowAfterHideDuration
         _ = setWindowLevel(window, key: .normalWindow)
 
         let minimizeResult = AXUIElementSetAttributeValue(
@@ -1145,6 +1157,7 @@ final class WhatsAppOverlayController {
 
     private func hide(window: AXUIElement, runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
         isAnimating = true
+        suppressShowUntil = CACurrentMediaTime() + suppressShowAfterHideDuration
         clearMinimizedState(window)
         _ = setWindowLevel(window, key: .normalWindow)
         setApplicationHidden(true, runningApp: runningApp)
