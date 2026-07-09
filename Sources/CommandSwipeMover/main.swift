@@ -744,6 +744,16 @@ final class WhatsAppOverlayController {
         let targetDisplay = displayContainingPointer()
 
         if !appIsHidden(runningApp),
+           appHasVisibleWindow(runningApp, on: targetDisplay) {
+            if let window = bestWindow(for: runningApp) {
+                hide(window: window, runningApp: runningApp, completion: completion)
+            } else {
+                hide(runningApp: runningApp, completion: completion)
+            }
+            return
+        }
+
+        if !appIsHidden(runningApp),
            let callWindow = visibleCallWindow(for: runningApp, preferredDisplay: targetDisplay) {
             hideCall(window: callWindow, runningApp: runningApp, completion: completion)
             return
@@ -804,6 +814,12 @@ final class WhatsAppOverlayController {
 
         let center = CGPoint(x: frame.midX, y: frame.midY)
         return display.contains(center)
+    }
+
+    private func appHasVisibleWindow(_ runningApp: NSRunningApplication, on display: CGRect) -> Bool {
+        visibleWindowInfoExists(for: runningApp, on: display) { _ in
+            true
+        }
     }
 
     private func visibleCallWindow(for runningApp: NSRunningApplication, preferredDisplay: CGRect) -> AXUIElement? {
@@ -1080,6 +1096,14 @@ final class WhatsAppOverlayController {
             self.isAnimating = false
             completion(MoveResult(message: visible ? "WhatsApp shown." : "WhatsApp could not come forward."))
         }
+    }
+
+    private func hide(runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
+        isAnimating = true
+        setApplicationHidden(true, runningApp: runningApp)
+        isOverlayVisible = false
+        isAnimating = false
+        completion(MoveResult(message: "WhatsApp hidden."))
     }
 
     private func hideCall(window: AXUIElement, runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
