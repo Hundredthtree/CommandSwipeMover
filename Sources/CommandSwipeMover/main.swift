@@ -749,6 +749,12 @@ final class WhatsAppOverlayController {
             return
         }
 
+        if !appIsHidden(runningApp),
+           let overlayWindow = visibleOverlayWindow(for: runningApp, preferredDisplay: targetDisplay) {
+            hide(window: overlayWindow, runningApp: runningApp, completion: completion)
+            return
+        }
+
         if let window = bestWindow(for: runningApp) {
             let appVisibleOnTargetDisplay = !appIsHidden(runningApp)
                 && chatWindowIsVisible(window, runningApp: runningApp, on: targetDisplay)
@@ -815,6 +821,38 @@ final class WhatsAppOverlayController {
             ?? visibleCallWindows.first
     }
 
+    private func visibleOverlayWindow(for runningApp: NSRunningApplication, preferredDisplay: CGRect) -> AXUIElement? {
+        let appElement = AXUIElementCreateApplication(runningApp.processIdentifier)
+        guard let windows = windows(for: appElement) else {
+            return nil
+        }
+
+        let visibleOverlayWindows = windows.filter { window in
+            isChatWindowCandidate(window)
+                && chatWindowIsVisible(window, runningApp: runningApp, on: nil)
+                && windowMatchesOverlayFrame(window)
+        }
+
+        return visibleOverlayWindows.first { windowIsOnDisplay($0, display: preferredDisplay) }
+            ?? visibleOverlayWindows.first
+    }
+
+    private func windowMatchesOverlayFrame(_ window: AXUIElement) -> Bool {
+        guard let frame = windowFrame(window) else {
+            return false
+        }
+
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        let display = displayContaining(center: center)
+        let expectedFrame = overlayFrame(in: display)
+        let tolerance: CGFloat = 18
+
+        return abs(frame.width - expectedFrame.width) <= tolerance
+            && abs(frame.height - expectedFrame.height) <= tolerance
+            && abs(frame.midX - expectedFrame.midX) <= tolerance
+            && abs(frame.midY - expectedFrame.midY) <= tolerance
+    }
+
     private func callWindowIsVisible(_ window: AXUIElement, runningApp: NSRunningApplication, on display: CGRect?) -> Bool {
         let targetWindowNumber = AccessibilityValue.windowNumberAttribute(window)
         let targetTitle = stringAttribute(kAXTitleAttribute, element: window)
@@ -838,7 +876,7 @@ final class WhatsAppOverlayController {
         }
     }
 
-    private func chatWindowIsVisible(_ window: AXUIElement, runningApp: NSRunningApplication, on display: CGRect) -> Bool {
+    private func chatWindowIsVisible(_ window: AXUIElement, runningApp: NSRunningApplication, on display: CGRect?) -> Bool {
         let targetWindowNumber = AccessibilityValue.windowNumberAttribute(window)
         return visibleWindowInfoExists(for: runningApp, on: display) { info in
             if let name = info[kCGWindowName as String] as? String,
