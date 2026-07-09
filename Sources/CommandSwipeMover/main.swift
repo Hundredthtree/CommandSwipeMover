@@ -724,8 +724,6 @@ final class WhatsAppOverlayController {
     private let applicationURL = URL(fileURLWithPath: "/Applications/WhatsApp.app")
     private var isOverlayVisible = false
     private var isAnimating = false
-    private var suppressShowUntil: CFTimeInterval = 0
-    private let suppressShowAfterHideDuration: CFTimeInterval = 1.5
 
     func toggle(completion: @escaping (MoveResult) -> Void) {
         guard AccessibilityPermission.isTrusted else {
@@ -744,12 +742,6 @@ final class WhatsAppOverlayController {
         }
 
         let targetDisplay = displayContainingPointer()
-        let now = CACurrentMediaTime()
-
-        if now < suppressShowUntil {
-            completion(MoveResult(message: "WhatsApp hidden."))
-            return
-        }
 
         if isOverlayVisible && !appIsHidden(runningApp) {
             if let window = bestWindow(for: runningApp) {
@@ -1110,7 +1102,6 @@ final class WhatsAppOverlayController {
 
     private func hide(runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
         isAnimating = true
-        suppressShowUntil = CACurrentMediaTime() + suppressShowAfterHideDuration
         setApplicationHidden(true, runningApp: runningApp)
         isOverlayVisible = false
         isAnimating = false
@@ -1119,7 +1110,6 @@ final class WhatsAppOverlayController {
 
     private func hideCall(window: AXUIElement, runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
         isAnimating = true
-        suppressShowUntil = CACurrentMediaTime() + suppressShowAfterHideDuration
         _ = setWindowLevel(window, key: .normalWindow)
 
         let minimizeResult = AXUIElementSetAttributeValue(
@@ -1157,7 +1147,6 @@ final class WhatsAppOverlayController {
 
     private func hide(window: AXUIElement, runningApp: NSRunningApplication, completion: @escaping (MoveResult) -> Void) {
         isAnimating = true
-        suppressShowUntil = CACurrentMediaTime() + suppressShowAfterHideDuration
         clearMinimizedState(window)
         _ = setWindowLevel(window, key: .normalWindow)
         setApplicationHidden(true, runningApp: runningApp)
