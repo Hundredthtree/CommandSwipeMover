@@ -743,6 +743,12 @@ final class WhatsAppOverlayController {
 
         let targetDisplay = displayContainingPointer()
 
+        if !appIsHidden(runningApp),
+           let callWindow = visibleCallWindow(for: runningApp, on: targetDisplay) {
+            hide(window: callWindow, runningApp: runningApp, completion: completion)
+            return
+        }
+
         if let window = bestWindow(for: runningApp) {
             let appVisibleOnTargetDisplay = !appIsHidden(runningApp)
                 && chatWindowIsVisible(window, runningApp: runningApp, on: targetDisplay)
@@ -794,8 +800,70 @@ final class WhatsAppOverlayController {
         return display.contains(center)
     }
 
+    private func visibleCallWindow(for runningApp: NSRunningApplication, on display: CGRect) -> AXUIElement? {
+        let appElement = AXUIElementCreateApplication(runningApp.processIdentifier)
+        guard let windows = windows(for: appElement) else {
+            return nil
+        }
+
+        return windows.first { window in
+            isCallWindowCandidate(window)
+                && windowIsOnDisplay(window, display: display)
+                && callWindowIsVisible(window, runningApp: runningApp, on: display)
+        }
+    }
+
+    private func callWindowIsVisible(_ window: AXUIElement, runningApp: NSRunningApplication, on display: CGRect) -> Bool {
+        let targetWindowNumber = AccessibilityValue.windowNumberAttribute(window)
+        let targetTitle = stringAttribute(kAXTitleAttribute, element: window)
+
+        return visibleWindowInfoExists(for: runningApp, on: display) { info in
+            let cgName = info[kCGWindowName as String] as? String
+            let nameLooksLikeCall = cgName?.localizedCaseInsensitiveContains("call") == true
+                || targetTitle?.localizedCaseInsensitiveContains("call") == true
+
+            guard nameLooksLikeCall else {
+                return false
+            }
+
+            if let targetWindowNumber,
+               let windowNumber = windowInfoIntValue(info[kCGWindowNumber as String]),
+               windowNumber == targetWindowNumber {
+                return true
+            }
+
+            return cgName == targetTitle
+        }
+    }
+
     private func chatWindowIsVisible(_ window: AXUIElement, runningApp: NSRunningApplication, on display: CGRect) -> Bool {
         let targetWindowNumber = AccessibilityValue.windowNumberAttribute(window)
+        return visibleWindowInfoExists(for: runningApp, on: display) { info in
+            if let name = info[kCGWindowName as String] as? String,
+               name.localizedCaseInsensitiveContains("call") {
+                return false
+            }
+
+            if let targetWindowNumber,
+               let windowNumber = windowInfoIntValue(info[kCGWindowNumber as String]),
+               windowNumber == targetWindowNumber {
+                return true
+            }
+
+            if let name = info[kCGWindowName as String] as? String,
+               name.localizedCaseInsensitiveContains("WhatsApp") {
+                return true
+            }
+
+            return false
+        }
+    }
+
+    private func visibleWindowInfoExists(
+        for runningApp: NSRunningApplication,
+        on display: CGRect,
+        matching matcher: ([String: Any]) -> Bool
+    ) -> Bool {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return false
@@ -804,11 +872,6 @@ final class WhatsAppOverlayController {
         return rawWindows.contains { info in
             guard let ownerPID = windowInfoIntValue(info[kCGWindowOwnerPID as String]),
                   ownerPID == Int(runningApp.processIdentifier) else {
-                return false
-            }
-
-            if let name = info[kCGWindowName as String] as? String,
-               name.localizedCaseInsensitiveContains("call") {
                 return false
             }
 
@@ -833,18 +896,7 @@ final class WhatsAppOverlayController {
                 return false
             }
 
-            if let targetWindowNumber,
-               let windowNumber = windowInfoIntValue(info[kCGWindowNumber as String]),
-               windowNumber == targetWindowNumber {
-                return true
-            }
-
-            if let name = info[kCGWindowName as String] as? String,
-               name.localizedCaseInsensitiveContains("WhatsApp") {
-                return true
-            }
-
-            return false
+            return matcher(info)
         }
     }
 
